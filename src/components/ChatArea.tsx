@@ -9,15 +9,18 @@ import {
   CheckCheck,
   AlertTriangle,
   User,
-  Hash
+  Hash,
+  Share2
 } from 'lucide-react';
 import { ChatMessage, Friend, ChatGroup } from '../types';
+import { InviteModal } from './InviteModal';
 
 interface ChatAreaProps {
   currentChatId: string | null;
   chatType: 'direct' | 'group';
   targetFriend?: Friend;
   targetGroup?: ChatGroup;
+  groupPassword?: string;
   messages: ChatMessage[];
   onSendMessage: (text: string) => void;
   onClearChat: () => void;
@@ -29,12 +32,14 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   chatType,
   targetFriend,
   targetGroup,
+  groupPassword,
   messages,
   onSendMessage,
   onClearChat,
   myUserId,
 }) => {
   const [inputText, setInputText] = useState('');
+  const [showInviteModal, setShowInviteModal] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom on new messages
@@ -99,6 +104,16 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
   return (
     <div className="flex-1 flex flex-col h-full bg-slate-950 overflow-hidden relative select-none">
+      {/* Group Invite Modal */}
+      {showInviteModal && targetGroup && (
+        <InviteModal
+          groupId={targetGroup.id}
+          groupName={targetGroup.name}
+          groupPassword={groupPassword}
+          onClose={() => setShowInviteModal(false)}
+        />
+      )}
+
       {/* Chat Header */}
       <div className="px-6 py-3.5 border-b border-slate-800/80 bg-slate-900/40 backdrop-blur-md flex items-center justify-between z-10">
         <div className="flex items-center gap-3">
@@ -122,15 +137,26 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           </div>
         </div>
 
-        {/* Clear Chat Button */}
+        {/* Header Action Buttons */}
         <div className="flex items-center gap-2">
+          {chatType === 'group' && targetGroup && (
+            <button
+              onClick={() => setShowInviteModal(true)}
+              title="Generate a 1-click invite link to invite friends to this group"
+              className="px-3 py-1.5 bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/30 text-cyan-300 rounded-lg text-xs font-mono transition flex items-center gap-1.5"
+            >
+              <Share2 className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Invite Link</span>
+            </button>
+          )}
+
           <button
             onClick={onClearChat}
             title="Immediately burn and erase current messages from memory"
             className="px-3 py-1.5 bg-slate-900 hover:bg-red-950/40 border border-slate-800 hover:border-red-500/40 text-slate-400 hover:text-red-300 rounded-lg text-xs font-mono transition flex items-center gap-1.5"
           >
             <Trash2 className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Burn Room Chat</span>
+            <span className="hidden sm:inline">Burn Chat</span>
           </button>
         </div>
       </div>

@@ -15,7 +15,8 @@ import {
   Eye,
   EyeOff,
   LogOut,
-  ChevronRight
+  ChevronRight,
+  Share2
 } from 'lucide-react';
 import { UserAccount, Friend, ChatGroup } from '../types';
 
@@ -29,6 +30,7 @@ interface SidebarProps {
   onAddFriend: (peerId: string, username: string) => void;
   onCreateGroup: (name: string, code: string, pass: string) => void;
   onJoinGroup: (code: string, pass: string) => void;
+  onShareGroup: (group: ChatGroup) => void;
   onLogout: () => void;
   onPanicNuke: () => void;
   privacyShieldEnabled: boolean;
@@ -45,6 +47,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onAddFriend,
   onCreateGroup,
   onJoinGroup,
+  onShareGroup,
   onLogout,
   onPanicNuke,
   privacyShieldEnabled,
@@ -324,17 +327,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
               groups.map((g) => {
                 const isSelected = activeChatType === 'group' && activeChatId === g.id;
                 return (
-                  <button
+                  <div
                     key={g.id}
                     onClick={() => onSelectChat(g.id, 'group')}
-                    className={`w-full p-2.5 rounded-xl flex items-center justify-between text-left transition ${
+                    className={`w-full p-2.5 rounded-xl flex items-center justify-between cursor-pointer transition ${
                       isSelected
                         ? 'bg-cyan-500/15 border border-cyan-500/30 text-white'
                         : 'hover:bg-slate-800/50 text-slate-300 border border-transparent'
                     }`}
                   >
-                    <div className="flex items-center gap-2.5 truncate">
-                      <div className="w-8 h-8 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-cyan-400">
+                    <div className="flex items-center gap-2.5 truncate flex-1">
+                      <div className="w-8 h-8 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-cyan-400 shrink-0">
                         <Hash className="w-4 h-4" />
                       </div>
                       <div className="truncate">
@@ -347,8 +350,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         </div>
                       </div>
                     </div>
-                    <ChevronRight className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-cyan-400' : 'text-slate-600'}`} />
-                  </button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onShareGroup(g);
+                        }}
+                        title="Get Group Invite Link"
+                        className="p-1 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-cyan-400 transition"
+                      >
+                        <Share2 className="w-3.5 h-3.5" />
+                      </button>
+                      <ChevronRight className={`w-3.5 h-3.5 ${isSelected ? 'text-cyan-400' : 'text-slate-600'}`} />
+                    </div>
+                  </div>
                 );
               })
             )}

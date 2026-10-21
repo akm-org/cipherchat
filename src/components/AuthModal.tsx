@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, KeyRound, User, Lock, Sparkles, CheckCircle2, AlertCircle, ArrowRight, UserPlus, LogIn } from 'lucide-react';
+import { Shield, KeyRound, User, Lock, Sparkles, CheckCircle2, AlertCircle, UserPlus, LogIn, Users } from 'lucide-react';
 import { UserAccount } from '../types';
 import { generateSecureId } from '../utils/crypto';
-import { getStoredAccount, getStoredSession } from '../utils/storage';
+import { getStoredAccount } from '../utils/storage';
+import { GroupInviteData } from '../utils/invite';
 
 interface AuthModalProps {
   onAccountCreated: (account: UserAccount, password: string) => void;
+  invite?: GroupInviteData | null;
 }
 
 const RANDOM_NAMES = [
@@ -13,7 +15,7 @@ const RANDOM_NAMES = [
   'AegisGuard', 'StealthOperative', 'ZeroEcho', 'SilentByte'
 ];
 
-export const AuthModal: React.FC<AuthModalProps> = ({ onAccountCreated }) => {
+export const AuthModal: React.FC<AuthModalProps> = ({ onAccountCreated, invite }) => {
   const [existingAccount, setExistingAccount] = useState<UserAccount | null>(null);
   const [mode, setMode] = useState<'create' | 'login'>('create');
 
@@ -123,6 +125,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onAccountCreated }) => {
           </p>
         </div>
 
+        {/* Incoming Invite Notification Banner */}
+        {invite && (
+          <div className="mb-4 p-3 bg-cyan-950/60 border border-cyan-500/40 rounded-xl flex items-center gap-3 text-xs text-cyan-200">
+            <div className="w-8 h-8 rounded-lg bg-cyan-500/20 flex items-center justify-center text-cyan-300 shrink-0">
+              <Users className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="font-bold text-white flex items-center gap-1.5">
+                <span>Group Invite: {invite.name}</span>
+              </div>
+              <div className="text-[11px] text-cyan-300/80">
+                Log in or initialize your alias to join this encrypted room immediately.
+              </div>
+            </div>
+          </div>
+        )}
+
         {error && (
           <div className="mb-4 p-3 bg-red-950/50 border border-red-500/40 rounded-xl flex items-center gap-2 text-xs text-red-300">
             <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
@@ -175,7 +194,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onAccountCreated }) => {
               className="w-full bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-400 hover:to-emerald-400 text-slate-950 font-bold py-2.5 px-4 rounded-xl text-sm font-mono tracking-wide shadow-lg shadow-cyan-500/20 transition duration-200 disabled:opacity-50 flex items-center justify-center gap-2"
             >
               <LogIn className="w-4 h-4" />
-              <span>UNLOCK SECURE TERMINAL</span>
+              <span>{invite ? 'UNLOCK & ENTER ROOM' : 'UNLOCK SECURE TERMINAL'}</span>
             </button>
 
             <div className="pt-2 text-center">
@@ -207,7 +226,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onAccountCreated }) => {
                   onClick={handleRandomize}
                   className="text-[11px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1 transition"
                 >
-                  <Sparkles className="w-3 h-3" />
+                  <Sparkles className="w-3.5 h-3.5" />
                   Generate Alias
                 </button>
               </div>
@@ -263,7 +282,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onAccountCreated }) => {
                 PERSISTENT LOCAL VAULT
               </div>
               <div className="text-[11px] text-slate-400">
-                Your account is saved locally on this browser. Reloading the page will keep you signed in seamlessly with no cloud database.
+                Your account is saved locally on this browser. Reloading the page keeps you signed in with no cloud database.
               </div>
             </div>
 
@@ -278,7 +297,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onAccountCreated }) => {
               ) : (
                 <>
                   <KeyRound className="w-4 h-4" />
-                  <span>CREATE & SAVE ACCOUNT</span>
+                  <span>{invite ? 'CREATE & JOIN GROUP ROOM' : 'CREATE & SAVE ACCOUNT'}</span>
                 </>
               )}
             </button>

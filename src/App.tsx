@@ -18,12 +18,15 @@ import {
   getStoredMessages,
   wipeAllVaultStorage,
 } from './utils/storage';
+import { parseGroupInviteUrl, clearInviteUrlParams, GroupInviteData } from './utils/invite';
 import { initSecurityGuard } from './utils/securityGuard';
 import { p2pService } from './services/p2p';
 import { AuthModal } from './components/AuthModal';
 import { Sidebar } from './components/Sidebar';
 import { ChatArea } from './components/ChatArea';
 import { SecurityOverlay } from './components/SecurityOverlay';
+import { InviteModal } from './components/InviteModal';
+import { IncomingInviteModal } from './components/IncomingInviteModal';
 
 export function App() {
   // Account & Cryptographic Vault State (Stored in Local Encrypted Vault + RAM)
@@ -32,6 +35,7 @@ export function App() {
   const userKeyRef = useRef<CryptoKey | null>(null);
   const groupKeysRef = useRef<Map<string, CryptoKey>>(new Map());
   const groupPasswordsRef = useRef<Record<string, string>>({});
+  const [groupPasswords, setGroupPasswords] = useState<Record<string, string>>({});
 
   // Chat State
   const [friends, setFriends] = useState<Friend[]>([]);
@@ -39,6 +43,10 @@ export function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [activeChatType, setActiveChatType] = useState<'direct' | 'group'>('direct');
+
+  // Group Invite Modals State
+  const [incomingInvite, setIncomingInvite] = useState<GroupInviteData | null>(null);
+  const [selectedGroupForInvite, setSelectedGroupForInvite] = useState<ChatGroup | null>(null);
 
   // Security & Tamper Detection State
   const [isDevtoolsOpen, setIsDevtoolsOpen] = useState(false);
@@ -65,7 +73,15 @@ export function App() {
     }, 4000);
   };
 
-  // 1. Auto-Restore Saved Session & State on Page Reload
+  // 1. Check for incoming Group Invite URL on load
+  useEffect(() => {
+    const invite = parseGroupInviteUrl();
+    if (invite) {
+      setIncomingInvite(invite);
+    }
+  }, []);
+
+  // 2. Auto-Restore Saved Session & State on Page Reload
   useEffect(() => {
     const session = getStoredSession();
     if (session) {
@@ -84,6 +100,7 @@ export function App() {
           const { groups: savedGroups, passwords } = getStoredGroups();
           setGroups(savedGroups);
           groupPasswordsRef.current = passwords;
+          setGroupPasswords(passwords);
 
           // Re-derive room crypto keys
           for (const [code, pass] of Object.entries(passwords)) {
@@ -218,7 +235,7 @@ export function App() {
     };
   }, [account]);
 
-  // Handle Account Initialization & Persistence
+  // Handle Account Initialization & Auto-Join Pending Group Invite
   const handleAccountCreated = async (newAccount: UserAccount, pass: string) => {
     try {
       const derivedKey = await deriveKeyFromPassword(pass, newAccount.id);
@@ -226,15 +243,14 @@ export function App() {
       setUserPassword(pass);
       setAccount(newAccount);
 
-      // Persist account and session in local vault
       saveAccountSession(newAccount, pass);
 
-      // Load any existing friends and groups for this user
       const existingFriends = getStoredFriends();
       const { groups: existingGroups, passwords } = getStoredGroups();
       setFriends(existingFriends);
       setGroups(existingGroups);
       groupPasswordsRef.current = passwords;
+      setGroupPasswords(passwords);
 
       for (const [code, p] of Object.entries(passwords)) {
         const roomKey = await deriveKeyFromPassword(p, `room_${code}`);
@@ -242,6 +258,13 @@ export function App() {
       }
 
       addSecurityEvent('Cryptographic Vault Initialized', '256-bit AES-GCM master key derived and saved locally', 'info');
+
+      // If user came via an invite link, join automatically on signup
+      if (incomingInvite) {
+        await handleJoinGroup(incomingInvite.join, incomingInvite.pass, incomingInvite.name);
+        setIncomingInvite(null);
+        clearInviteUrlParams();
+      }
     } catch (err) {
       console.error('Key derivation failed:', err);
     }
@@ -283,6 +306,7 @@ export function App() {
 
     const newPassRecord = { ...groupPasswordsRef.current, [code]: pass };
     groupPasswordsRef.current = newPassRecord;
+    setGroupPasswords(newPassRecord);
 
     const newGroup: ChatGroup = {
       id: code,
@@ -302,34 +326,41 @@ export function App() {
   };
 
   // Join Group Room & Persist
-  const handleJoinGroup = async (code: string, pass: string) => {
-    if (groups.some((g) => g.id === code)) {
-      setActiveChatId(code);
-      setActiveChatType('group');
-      return;
-    }
-
+  const handleJoinGroup = async (code: string, pass: string, displayName?: string) => {
     const roomKey = await deriveKeyFromPassword(pass, `room_${code}`);
     groupKeysRef.current.set(code, roomKey);
 
     const newPassRecord = { ...groupPasswordsRef.current, [code]: pass };
     groupPasswordsRef.current = newPassRecord;
+    setGroupPasswords(newPassRecord);
 
-    const newGroup: ChatGroup = {
-      id: code,
-      name: `Room ${code}`,
-      passwordRequired: true,
-      memberCount: 1,
-      isHost: false,
-    };
+    let updatedGroups = [...groups];
+    const existing = groups.find((g) => g.id === code);
 
-    const updatedGroups = [...groups, newGroup];
-    setGroups(updatedGroups);
-    saveStoredGroups(updatedGroups, newPassRecord);
+    if (!existing) {
+      const newGroup: ChatGroup = {
+        id: code,
+        name: displayName || `Room ${code}`,
+        passwordRequired: true,
+        memberCount: 1,
+        isHost: false,
+      };
+      updatedGroups = [...groups, newGroup];
+      setGroups(updatedGroups);
+      saveStoredGroups(updatedGroups, newPassRecord);
+    }
 
     setActiveChatId(code);
     setActiveChatType('group');
-    addSecurityEvent('Group Room Joined', `Subscribed to encrypted enclave: ${code}`, 'info');
+    addSecurityEvent('Group Joined', `Connected to encrypted room: ${displayName || code}`, 'info');
+  };
+
+  // Accept incoming invite
+  const handleAcceptIncomingInvite = async () => {
+    if (!incomingInvite) return;
+    await handleJoinGroup(incomingInvite.join, incomingInvite.pass, incomingInvite.name);
+    setIncomingInvite(null);
+    clearInviteUrlParams();
   };
 
   // Send Message & Persist
@@ -337,7 +368,7 @@ export function App() {
     if (!account || !activeChatId) return;
 
     const now = Date.now();
-    const expiresAt = now + 30 * 60 * 1000; // Strict 30-minute self-destruct TTL
+    const expiresAt = now + 30 * 60 * 1000;
 
     let encryptedPayload = '';
 
@@ -398,10 +429,10 @@ export function App() {
       saveStoredMessages(filtered);
       return filtered;
     });
-    addSecurityEvent('Messages Burned', 'All messages for this channel purged from volatile storage', 'warning');
+    addSecurityEvent('Messages Burned', 'All messages for this channel purged from storage', 'warning');
   };
 
-  // Logout / Lock Terminal: removes session key so user can unlock with password, keeps account saved
+  // Logout / Lock Terminal
   const handleLogout = () => {
     clearSessionOnly();
     p2pService.destroy();
@@ -413,13 +444,14 @@ export function App() {
     addSecurityEvent('Terminal Locked', 'Session locked. Account remains saved on this browser.', 'info');
   };
 
-  // Emergency Panic Nuke: completely erases all storage, accounts, friends, messages, and disconnects
+  // Emergency Panic Nuke
   const handlePanicNuke = () => {
     wipeAllVaultStorage();
     p2pService.destroy();
     userKeyRef.current = null;
     groupKeysRef.current.clear();
     groupPasswordsRef.current = {};
+    setGroupPasswords({});
     setMessages([]);
     setFriends([]);
     setGroups([]);
@@ -445,8 +477,30 @@ export function App() {
         onDismissEvent={(id) => setSecurityEvents((prev) => prev.filter((e) => e.id !== id))}
       />
 
+      {/* Incoming Invite Modal for logged-in users */}
+      {account && incomingInvite && (
+        <IncomingInviteModal
+          invite={incomingInvite}
+          onAccept={handleAcceptIncomingInvite}
+          onDismiss={() => {
+            setIncomingInvite(null);
+            clearInviteUrlParams();
+          }}
+        />
+      )}
+
+      {/* Share Group Invite Modal (from Sidebar or ChatArea) */}
+      {selectedGroupForInvite && (
+        <InviteModal
+          groupId={selectedGroupForInvite.id}
+          groupName={selectedGroupForInvite.name}
+          groupPassword={groupPasswords[selectedGroupForInvite.id]}
+          onClose={() => setSelectedGroupForInvite(null)}
+        />
+      )}
+
       {!account ? (
-        <AuthModal onAccountCreated={handleAccountCreated} />
+        <AuthModal onAccountCreated={handleAccountCreated} invite={incomingInvite} />
       ) : (
         <div className="flex h-full w-full">
           <Sidebar
@@ -461,7 +515,8 @@ export function App() {
             }}
             onAddFriend={handleAddFriend}
             onCreateGroup={handleCreateGroup}
-            onJoinGroup={handleJoinGroup}
+            onJoinGroup={(code, pass) => handleJoinGroup(code, pass)}
+            onShareGroup={(group) => setSelectedGroupForInvite(group)}
             onLogout={handleLogout}
             onPanicNuke={handlePanicNuke}
             privacyShieldEnabled={privacyShieldEnabled}
@@ -473,6 +528,7 @@ export function App() {
             chatType={activeChatType}
             targetFriend={targetFriend}
             targetGroup={targetGroup}
+            groupPassword={activeChatId ? groupPasswords[activeChatId] : undefined}
             messages={currentMessages}
             onSendMessage={handleSendMessage}
             onClearChat={handleClearChat}
