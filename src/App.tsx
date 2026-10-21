@@ -6,6 +6,18 @@ import {
   decryptMessage,
   generateSecureId,
 } from './utils/crypto';
+import {
+  saveAccountSession,
+  getStoredSession,
+  clearSessionOnly,
+  saveStoredFriends,
+  getStoredFriends,
+  saveStoredGroups,
+  getStoredGroups,
+  saveStoredMessages,
+  getStoredMessages,
+  wipeAllVaultStorage,
+} from './utils/storage';
 import { initSecurityGuard } from './utils/securityGuard';
 import { p2pService } from './services/p2p';
 import { AuthModal } from './components/AuthModal';
@@ -14,13 +26,14 @@ import { ChatArea } from './components/ChatArea';
 import { SecurityOverlay } from './components/SecurityOverlay';
 
 export function App() {
-  // Account & Cryptographic Vault State (In-Memory Only)
+  // Account & Cryptographic Vault State (Stored in Local Encrypted Vault + RAM)
   const [account, setAccount] = useState<UserAccount | null>(null);
   const [userPassword, setUserPassword] = useState<string>('');
   const userKeyRef = useRef<CryptoKey | null>(null);
   const groupKeysRef = useRef<Map<string, CryptoKey>>(new Map());
+  const groupPasswordsRef = useRef<Record<string, string>>({});
 
-  // Chat State (Volatile RAM)
+  // Chat State
   const [friends, setFriends] = useState<Friend[]>([]);
   const [groups, setGroups] = useState<ChatGroup[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -47,11 +60,57 @@ export function App() {
     };
     setSecurityEvents((prev) => [...prev, newEvent]);
 
-    // Auto-dismiss toast after 4 seconds
     setTimeout(() => {
       setSecurityEvents((prev) => prev.filter((e) => e.id !== newEvent.id));
     }, 4000);
   };
+
+  // 1. Auto-Restore Saved Session & State on Page Reload
+  useEffect(() => {
+    const session = getStoredSession();
+    if (session) {
+      const initSession = async () => {
+        try {
+          const derivedKey = await deriveKeyFromPassword(session.pass, session.account.id);
+          userKeyRef.current = derivedKey;
+          setUserPassword(session.pass);
+          setAccount(session.account);
+
+          // Restore friends
+          const savedFriends = getStoredFriends();
+          setFriends(savedFriends);
+
+          // Restore groups & passwords
+          const { groups: savedGroups, passwords } = getStoredGroups();
+          setGroups(savedGroups);
+          groupPasswordsRef.current = passwords;
+
+          // Re-derive room crypto keys
+          for (const [code, pass] of Object.entries(passwords)) {
+            const roomKey = await deriveKeyFromPassword(pass, `room_${code}`);
+            groupKeysRef.current.set(code, roomKey);
+          }
+
+          // Restore active messages (strictly filtering out any expired >30 mins)
+          const savedMessages = getStoredMessages();
+          setMessages(savedMessages);
+
+          if (savedFriends.length > 0) {
+            setActiveChatId(savedFriends[0].peerId);
+            setActiveChatType('direct');
+          } else if (savedGroups.length > 0) {
+            setActiveChatId(savedGroups[0].id);
+            setActiveChatType('group');
+          }
+
+          addSecurityEvent('Session Restored', `Welcome back, ${session.account.username}`, 'info');
+        } catch (err) {
+          console.warn('Could not restore session:', err);
+        }
+      };
+      initSession();
+    }
+  }, []);
 
   // Initialize Security Guard (Anti-F12, Anti-RightClick, Anti-Save, Anti-DevTools)
   useEffect(() => {
@@ -70,7 +129,6 @@ export function App() {
       }
     });
 
-    // Window focus / blur privacy shield
     const handleBlur = () => {
       if (privacyShieldEnabled) {
         setIsWindowBlurred(true);
@@ -96,6 +154,9 @@ export function App() {
       const now = Date.now();
       setMessages((prev) => {
         const filtered = prev.filter((m) => m.expiresAt > now);
+        if (filtered.length !== prev.length) {
+          saveStoredMessages(filtered);
+        }
         return filtered;
       });
       setTick((t) => (t + 1) % 1000);
@@ -131,12 +192,16 @@ export function App() {
               senderName: data.senderName,
               content: decryptedText,
               timestamp: data.timestamp,
-              expiresAt: data.expiresAt, // 30 minutes from creation
+              expiresAt: data.expiresAt,
               targetId: data.targetId,
               isMine: false,
             };
 
-            setMessages((prev) => [...prev, newMsg]);
+            setMessages((prev) => {
+              const updated = [...prev, newMsg];
+              saveStoredMessages(updated);
+              return updated;
+            });
             addSecurityEvent('Encrypted Payload Received', `Verified from ${data.senderName}`, 'info');
           }
         } catch (err) {
@@ -153,20 +218,36 @@ export function App() {
     };
   }, [account]);
 
-  // Handle Account Initialization
+  // Handle Account Initialization & Persistence
   const handleAccountCreated = async (newAccount: UserAccount, pass: string) => {
     try {
       const derivedKey = await deriveKeyFromPassword(pass, newAccount.id);
       userKeyRef.current = derivedKey;
       setUserPassword(pass);
       setAccount(newAccount);
-      addSecurityEvent('Cryptographic Vault Initialized', '256-bit AES-GCM master key derived via PBKDF2', 'info');
+
+      // Persist account and session in local vault
+      saveAccountSession(newAccount, pass);
+
+      // Load any existing friends and groups for this user
+      const existingFriends = getStoredFriends();
+      const { groups: existingGroups, passwords } = getStoredGroups();
+      setFriends(existingFriends);
+      setGroups(existingGroups);
+      groupPasswordsRef.current = passwords;
+
+      for (const [code, p] of Object.entries(passwords)) {
+        const roomKey = await deriveKeyFromPassword(p, `room_${code}`);
+        groupKeysRef.current.set(code, roomKey);
+      }
+
+      addSecurityEvent('Cryptographic Vault Initialized', '256-bit AES-GCM master key derived and saved locally', 'info');
     } catch (err) {
       console.error('Key derivation failed:', err);
     }
   };
 
-  // Add Friend
+  // Add Friend & Persist
   const handleAddFriend = (peerId: string, username: string) => {
     if (friends.some((f) => f.peerId === peerId)) {
       addSecurityEvent('Friend Exists', 'This peer is already in your active channels', 'warning');
@@ -179,18 +260,18 @@ export function App() {
       status: 'online',
     };
 
-    setFriends((prev) => [...prev, newFriend]);
+    const updated = [...friends, newFriend];
+    setFriends(updated);
+    saveStoredFriends(updated);
+
     setActiveChatId(peerId);
     setActiveChatType('direct');
     addSecurityEvent('Friend Connected', `${username} added to encrypted channels`, 'info');
 
-    // Pre-establish P2P WebRTC data connection
-    p2pService.connectToPeer(peerId).catch(() => {
-      // Peer may connect later when online
-    });
+    p2pService.connectToPeer(peerId).catch(() => {});
   };
 
-  // Create Group Room
+  // Create Group Room & Persist
   const handleCreateGroup = async (name: string, code: string, pass: string) => {
     if (groups.some((g) => g.id === code)) {
       addSecurityEvent('Room Exists', 'A group with this code is already active', 'warning');
@@ -200,6 +281,9 @@ export function App() {
     const roomKey = await deriveKeyFromPassword(pass, `room_${code}`);
     groupKeysRef.current.set(code, roomKey);
 
+    const newPassRecord = { ...groupPasswordsRef.current, [code]: pass };
+    groupPasswordsRef.current = newPassRecord;
+
     const newGroup: ChatGroup = {
       id: code,
       name,
@@ -208,13 +292,16 @@ export function App() {
       isHost: true,
     };
 
-    setGroups((prev) => [...prev, newGroup]);
+    const updatedGroups = [...groups, newGroup];
+    setGroups(updatedGroups);
+    saveStoredGroups(updatedGroups, newPassRecord);
+
     setActiveChatId(code);
     setActiveChatType('group');
     addSecurityEvent('Group Room Created', `Room "${name}" encrypted with AES-256 key`, 'info');
   };
 
-  // Join Group Room
+  // Join Group Room & Persist
   const handleJoinGroup = async (code: string, pass: string) => {
     if (groups.some((g) => g.id === code)) {
       setActiveChatId(code);
@@ -225,6 +312,9 @@ export function App() {
     const roomKey = await deriveKeyFromPassword(pass, `room_${code}`);
     groupKeysRef.current.set(code, roomKey);
 
+    const newPassRecord = { ...groupPasswordsRef.current, [code]: pass };
+    groupPasswordsRef.current = newPassRecord;
+
     const newGroup: ChatGroup = {
       id: code,
       name: `Room ${code}`,
@@ -233,13 +323,16 @@ export function App() {
       isHost: false,
     };
 
-    setGroups((prev) => [...prev, newGroup]);
+    const updatedGroups = [...groups, newGroup];
+    setGroups(updatedGroups);
+    saveStoredGroups(updatedGroups, newPassRecord);
+
     setActiveChatId(code);
     setActiveChatType('group');
     addSecurityEvent('Group Room Joined', `Subscribed to encrypted enclave: ${code}`, 'info');
   };
 
-  // Send Message
+  // Send Message & Persist
   const handleSendMessage = async (text: string) => {
     if (!account || !activeChatId) return;
 
@@ -267,7 +360,6 @@ export function App() {
       if (roomKey) {
         encryptedPayload = await encryptMessage(text, roomKey);
       }
-      // Broadcast to connected peers
       const peerIds = friends.map((f) => f.peerId);
       p2pService.broadcastToPeers(peerIds, {
         type: 'group',
@@ -280,7 +372,6 @@ export function App() {
       });
     }
 
-    // Append to local state
     const newMsg: ChatMessage = {
       id: generateSecureId('msg', 8),
       senderId: account.friendCode,
@@ -292,28 +383,50 @@ export function App() {
       isMine: true,
     };
 
-    setMessages((prev) => [...prev, newMsg]);
+    setMessages((prev) => {
+      const updated = [...prev, newMsg];
+      saveStoredMessages(updated);
+      return updated;
+    });
   };
 
-  // Burn / Clear current chat messages from RAM
+  // Burn / Clear current chat messages
   const handleClearChat = () => {
     if (!activeChatId) return;
-    setMessages((prev) => prev.filter((m) => m.targetId !== activeChatId));
-    addSecurityEvent('Messages Burned', 'All messages for this channel purged from volatile RAM', 'warning');
+    setMessages((prev) => {
+      const filtered = prev.filter((m) => m.targetId !== activeChatId);
+      saveStoredMessages(filtered);
+      return filtered;
+    });
+    addSecurityEvent('Messages Burned', 'All messages for this channel purged from volatile storage', 'warning');
   };
 
-  // Emergency Panic Nuke: wipes all volatile state, keys, and disconnects
-  const handlePanicNuke = () => {
+  // Logout / Lock Terminal: removes session key so user can unlock with password, keeps account saved
+  const handleLogout = () => {
+    clearSessionOnly();
     p2pService.destroy();
     userKeyRef.current = null;
     groupKeysRef.current.clear();
+    setAccount(null);
+    setUserPassword('');
+    setActiveChatId(null);
+    addSecurityEvent('Terminal Locked', 'Session locked. Account remains saved on this browser.', 'info');
+  };
+
+  // Emergency Panic Nuke: completely erases all storage, accounts, friends, messages, and disconnects
+  const handlePanicNuke = () => {
+    wipeAllVaultStorage();
+    p2pService.destroy();
+    userKeyRef.current = null;
+    groupKeysRef.current.clear();
+    groupPasswordsRef.current = {};
     setMessages([]);
     setFriends([]);
     setGroups([]);
     setActiveChatId(null);
     setAccount(null);
     setUserPassword('');
-    addSecurityEvent('PANIC WIPE COMPLETED', 'All cryptographic keys, sessions, and messages erased from RAM', 'danger');
+    addSecurityEvent('PANIC WIPE COMPLETED', 'All cryptographic keys, sessions, and data permanently erased', 'danger');
   };
 
   // Filter messages for current chat
@@ -323,7 +436,6 @@ export function App() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-slate-950 font-sans text-slate-100">
-      {/* Security Overlay (DevTools Tamper Lock, Window Blur Shield, Security Alerts) */}
       <SecurityOverlay
         isDevtoolsOpen={isDevtoolsOpen}
         isWindowBlurred={isWindowBlurred}
@@ -333,12 +445,10 @@ export function App() {
         onDismissEvent={(id) => setSecurityEvents((prev) => prev.filter((e) => e.id !== id))}
       />
 
-      {/* Account Generation Modal if not authenticated */}
       {!account ? (
         <AuthModal onAccountCreated={handleAccountCreated} />
       ) : (
         <div className="flex h-full w-full">
-          {/* Left Sidebar */}
           <Sidebar
             account={account}
             friends={friends}
@@ -352,12 +462,12 @@ export function App() {
             onAddFriend={handleAddFriend}
             onCreateGroup={handleCreateGroup}
             onJoinGroup={handleJoinGroup}
+            onLogout={handleLogout}
             onPanicNuke={handlePanicNuke}
             privacyShieldEnabled={privacyShieldEnabled}
             onTogglePrivacyShield={() => setPrivacyShieldEnabled(!privacyShieldEnabled)}
           />
 
-          {/* Main Chat Area */}
           <ChatArea
             currentChatId={activeChatId}
             chatType={activeChatType}

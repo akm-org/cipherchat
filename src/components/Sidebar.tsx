@@ -29,6 +29,7 @@ interface SidebarProps {
   onAddFriend: (peerId: string, username: string) => void;
   onCreateGroup: (name: string, code: string, pass: string) => void;
   onJoinGroup: (code: string, pass: string) => void;
+  onLogout: () => void;
   onPanicNuke: () => void;
   privacyShieldEnabled: boolean;
   onTogglePrivacyShield: () => void;
@@ -44,6 +45,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onAddFriend,
   onCreateGroup,
   onJoinGroup,
+  onLogout,
   onPanicNuke,
   privacyShieldEnabled,
   onTogglePrivacyShield,
@@ -123,18 +125,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           </div>
 
-          {/* Privacy Shield quick toggle */}
-          <button
-            onClick={onTogglePrivacyShield}
-            title={privacyShieldEnabled ? "Disable Screen Blur Shield" : "Enable Screen Blur Shield"}
-            className={`p-1.5 rounded-lg border transition ${
-              privacyShieldEnabled
-                ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-300'
-                : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'
-            }`}
-          >
-            {privacyShieldEnabled ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-          </button>
+          <div className="flex items-center gap-1">
+            {/* Privacy Shield quick toggle */}
+            <button
+              onClick={onTogglePrivacyShield}
+              title={privacyShieldEnabled ? "Disable Screen Blur Shield" : "Enable Screen Blur Shield"}
+              className={`p-1.5 rounded-lg border transition ${
+                privacyShieldEnabled
+                  ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-300'
+                  : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'
+              }`}
+            >
+              {privacyShieldEnabled ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            </button>
+          </div>
         </div>
 
         {/* User Profile Card */}
@@ -364,15 +368,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </span>
         </div>
 
-        {/* Panic Button */}
-        <button
-          onClick={onPanicNuke}
-          title="Instantly purges all messages from RAM, destroys cryptographic session keys, and disconnects"
-          className="w-full py-2 px-3 bg-red-950/40 hover:bg-red-900/60 border border-red-500/40 hover:border-red-500/70 text-red-300 rounded-xl text-xs font-mono font-bold tracking-wider flex items-center justify-center gap-2 transition duration-200"
-        >
-          <Flame className="w-3.5 h-3.5 text-red-400" />
-          <span>PANIC: NUKE SESSION</span>
-        </button>
+        {/* Buttons: Lock/Logout & Panic Nuke */}
+        <div className="flex gap-2">
+          <button
+            onClick={onLogout}
+            title="Lock terminal and log out. Account remains saved on this browser."
+            className="flex-1 py-2 px-2 bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-300 rounded-xl text-[11px] font-mono font-medium flex items-center justify-center gap-1.5 transition"
+          >
+            <LogOut className="w-3.5 h-3.5 text-slate-400" />
+            <span>Lock / Exit</span>
+          </button>
+
+          <button
+            onClick={onPanicNuke}
+            title="Instantly purges all messages, destroys cryptographic session keys, wipes local vault storage, and disconnects"
+            className="flex-1 py-2 px-2 bg-red-950/40 hover:bg-red-900/60 border border-red-500/40 hover:border-red-500/70 text-red-300 rounded-xl text-[11px] font-mono font-bold tracking-tight flex items-center justify-center gap-1.5 transition duration-200"
+          >
+            <Flame className="w-3.5 h-3.5 text-red-400" />
+            <span>PANIC NUKE</span>
+          </button>
+        </div>
       </div>
 
       {/* Modal: Add Friend */}
