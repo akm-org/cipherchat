@@ -32,7 +32,7 @@ A hardened, zero-knowledge, peer-to-peer ephemeral chat application designed for
 cd /path/to/cipherchat
 
 # Add your GitHub remote URL (replace <your-username> and <your-repo>)
-git remote add origin https://github.com/<your-username>/<your-repo>.git
+git remote add origin https://github.com/akm-org/cipherchat.git
 
 # Push your code to GitHub
 git push -u origin main
